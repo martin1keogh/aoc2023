@@ -9,59 +9,38 @@
 :- import_module int.
 :- import_module list.
 :- import_module string.
-:- import_module bool.
 :- import_module ranges.
-:- import_module pair.
-:- import_module multi_map.
-:- import_module map.
 
 
-:- type range ---> r(dest_start::int, source_start::int, length::int).
+:- type offset_range ---> offr(range::ranges, offset::int).
 
 
-:- pred parse_range(string::in, range::out) is semidet.
+:- pred parse_range(string::in, offset_range::out) is semidet.
 parse_range(Line, Range) :- (
-    /*trace [io(!IO)] (io.write(Line, !IO), io.nl(!IO)),*/
-
     Chunks = string.split_at_char(' ', Line),
-    list.map(string.to_int, Chunks, Res),
-    Res = [DestS, SourcS, R],
-    Range = r(DestS, SourcS, R)
+    list.map(string.to_int, Chunks, [Dest, Source, R]),
+    Range = offr(range(Source, Source + R - 1), Dest - Source)
 ).
 
-:- pred parse_ranges(list(string)::in, list(list(range))::out) is semidet.
+:- pred parse_ranges(list(string)::in, list(list(offset_range))::out) is det.
 parse_ranges(Lines, RangesList) :- (
-    list.foldl(
-        pred(Line::in, Acc::in, Out::out) is semidet :- (
+    list.foldr(
+        pred(Line::in, {WholeAcc, GroupAcc}::in, {WholeOut, GroupOut}::out) is det :- (
+            if parse_range(Line, R)
+            then
+                WholeOut = WholeAcc, GroupOut = [R | GroupAcc]
+            else 
             (
-                if parse_range(Line, R)
-                then
-                    (
-                        Acc = [],
-                        Out = [[R]]
-                        ;
-                        Acc = [[] | [[] | T]],
-                        Out = [[R] | T]
-                        ;
-                        Acc = [[] | T @ [[_ | _] | _]],
-                        Out = [[R] | T]
-                        ;
-                        Acc = [H @ [_ | _] | T],
-                        Out = [[R | H] | T]
-                    )
-                else
-                    (
-                        Acc = [],
-                        Out = []
-                        ;
-                        Acc = [_ | _],
-                        Out = [[] | Acc]
-                    )
+                % Note: GroupAcc is an 'in' value, so the first part here
+                % is not an assignment (or unification) but a guard.
+                GroupAcc = [], WholeOut = WholeAcc, GroupOut = []
+                ;
+                GroupAcc = [_ | _], WholeOut = [GroupAcc | WholeAcc], GroupOut = []
             )
         ),
         Lines,
-        [],
-        RangesList
+        {[], []},
+        {RangesList, _}
     )
 ).
 
@@ -73,73 +52,65 @@ extract_seeds(FirstLine, Seeds) :- (
 ).
 
 
-:- pred compute_p1(list(list(range))::in, list(int)::in, int::out) is semidet.
-compute_p1(RangesList, Seeds, Min) :- (
-    list.map(
-        find_mapping(RangesList),
-        Seeds,
-        Locations
-    ),
+% P2, group into pairs & create ranges
+:- pred seeds_to_seed_ranges(list(int)::in, ranges::out) is semidet.
+seeds_to_seed_ranges(Seeds, SeedRanges) :-
     list.foldl(
-        int.min, Locations, int.max_int, Min
-    )
+        pred([S, E]::in, In::in, Out::out) is semidet :- Out = union(In, range(S, S + E - 1)),
+        list.chunk(Seeds, 2),
+        ranges.empty,
+        SeedRanges
+    ).
+
+
+:- pred compute(list(list(offset_range))::in, ranges::in, int::out) is semidet.
+compute(RangesList, Seeds, Min) :- (
+    find_mapping(RangesList, Seeds, Locations),
+    least(Locations, Min)
 ).
 
 
-:- pred find_mapping(list(list(range))::in, int::in, int::out) is semidet.
-find_mapping(RangesList, !V) :- (
-    (
-        RangesList = [
-            HumidityToLocation,
-            TemperatureToHumidity,
-            LightToTemperature,
-            WaterToLight,
-            FertilizerToWater,
-            SoilToFertilizer,
-            SeedToSoil
-        ],
-        find_mapping_rec(SeedToSoil, !V),
-        find_mapping_rec(SoilToFertilizer, !V),
-        find_mapping_rec(FertilizerToWater, !V),
-        find_mapping_rec(WaterToLight, !V),
-        find_mapping_rec(LightToTemperature, !V),
-        find_mapping_rec(TemperatureToHumidity, !V),
-        find_mapping_rec(HumidityToLocation, !V)
-    ;
-        fail
-    )
-).
+:- pred find_mapping(list(list(offset_range))::in, ranges::in, ranges::out) is det.
+find_mapping(RangesList, !V) :-
+    list.foldl(find_mapping_rec, RangesList, !V).
 
 
-:- pred find_mapping_rec(list(range)::in, int::in, int::out) is det.
-find_mapping_rec(Ranges, In, Out) :- (
-    if find_first_match(
-        pred(Range::in) is semidet :- (
-            In >= Range^source_start, In < Range^source_start + Range^length
+:- pred find_mapping_rec(list(offset_range)::in, ranges::in, ranges::out) is det.
+find_mapping_rec(OffsetRanges, In, Out) :- (
+    list.foldl(
+        pred(offr(Range, Offset)::in, {PrevMapped, Modifiables}::in, {Mapped, Unmapped}::out) is det :- (
+            Common = intersection(Modifiables, Range),
+            Shifted = shift(Common, Offset),
+
+            Unmapped = difference(Modifiables, Range),
+            Mapped = union(PrevMapped, Shifted)
         ),
-        Ranges,
-        FM
-    )
-    then
-        /*trace [io(!IO)] (io.write(FM, !IO), io.nl(!IO), io.write(In, !IO), io.nl(!IO)),*/
-        Out = FM^dest_start - FM^source_start + In
-    else Out = In
+        OffsetRanges,
+        {ranges.empty, In},
+        {MappedFinal, UnmappedFinal}
+    ),
+    Out = union(MappedFinal, UnmappedFinal)
 ).
 
 
 main(!IO) :- (
-  io.read_named_file_as_lines("/tmp/05.txt", Result, !IO),
+    io.read_named_file_as_lines("/tmp/05.txt", Result, !IO),
 
     (
         Result = ok(Lines),
         (
-            if parse_ranges(Lines, Out),
+            if parse_ranges(Lines, RangesList),
                extract_seeds(det_head(Lines), Seeds),
-               compute_p1(Out, Seeds, Res)
+               % P1
+               compute(RangesList, ranges.from_list(Seeds), Res1),
+               % P2
+               seeds_to_seed_ranges(Seeds, SeedRanges),
+               compute(RangesList, SeedRanges, Res2)
             then
-                io.write(Res, !IO), io.nl(!IO)
+                io.write(Res1, !IO), io.nl(!IO),
+                io.write(Res2, !IO), io.nl(!IO)
             else
-                io.write("though", !IO)
+                io.write("tough", !IO)
         )
     ;
         Result = error(Error),
