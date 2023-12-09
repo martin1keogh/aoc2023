@@ -31,20 +31,34 @@ parse_row(In, {F, {L, R}}) :- (
     between(In, 12, 15, R)
 ).
 
-:- pred compute_p1(string::in, map(string, {string, string})::in, list(dir)::in, list(dir)::in, int::out) is semidet.
-compute_p1(Pos, Doors, [], Dirs, Steps) :- compute_p1(Pos, Doors, Dirs, Dirs, Steps).
-compute_p1(Pos, Doors, [H | T], Dirs, Steps) :-
+:- pred compute(map(string, {string, string})::in, list(dir)::in, list(dir)::in, string::in, string::in, int::out) is semidet.
+compute(Doors, [], Dirs, Target, Pos, Steps) :- compute(Doors, Dirs, Dirs, Target, Pos, Steps).
+compute(Doors, [H | T], Dirs, Target, Pos, Steps) :-
     (
-        if Pos = "ZZZ"
+        if suffix(Pos, Target)
         then Steps = 0
         else
             search(Doors, Pos, {L, R}),
             (
-                H = l -> compute_p1(L, Doors, T, Dirs, Steps - 1);
-                H = r -> compute_p1(R, Doors, T, Dirs, Steps - 1);
+                H = l -> compute(Doors, T, Dirs, Target, L, Steps - 1);
+                H = r -> compute(Doors, T, Dirs, Target, R, Steps - 1);
                 fail
             )
     ).
+
+
+:- pred gcd(int::in, int::in, int::out) is det.
+gcd(X, Y, GCD) :- (
+    X = Y -> GCD = X;
+    X > Y -> gcd(Y, X, GCD);
+    gcd(X, Y - X, GCD)
+).
+
+
+:- pred lcm(int::in, int::in, int::out) is det.
+lcm(X, Y, LCM) :-
+    gcd(X, Y, GCD),
+    LCM = (X * Y) / GCD.
 
 
 main(!IO) :- (
@@ -59,9 +73,18 @@ main(!IO) :- (
                 pred({F, {L, R}}::in, AccIn::in, AccOut::out) is semidet :- map.set(F, {L, R}, AccIn, AccOut),
                 DoorList, map.init, Doors
             ),
-            compute_p1("AAA", Doors, Dirs, Dirs, Steps)
+            compute(Doors, Dirs, Dirs, "ZZZ", "AAA", Steps),
+            filter(
+                pred(F::in) is semidet :- suffix(F, "A"),
+                keys(Doors),
+                Entrypoints
+            ),
+            map(compute(Doors, Dirs, Dirs, "Z"), Entrypoints, X),
+            foldl(lcm, X, 1, Y)
         then
             io.write(Steps, !IO),
+            io.nl(!IO),
+            io.write(Y, !IO),
             io.nl(!IO)
         else
             io.write("tough", !IO)
