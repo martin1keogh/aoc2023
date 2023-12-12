@@ -20,34 +20,51 @@ parse_row(Row, {Conditions, Groups}) :-
     GroupsSS = split_at_char(',', GroupsS),
     filter_map(to_int, GroupsSS, Groups).
 
-:- pred map_condition(char::in, char::out) is multi.
-map_condition(I, O) :- I = '?' -> (O = '#'; O = (.)); O = I.
-
-:- pred map_conditions(list(char)::in, list(char)::out) is multi.
-map_conditions(LI, LO) :- map(map_condition, LI, LO).
-
-:- pred valid_mapping(list(char)::in, list(int)::in) is semidet.
-valid_mapping(Chars, Groups) :-
-    % any way to avoid list(char) -> string -> list(char) wankery?
-    from_char_list(Chars, String),
-    SpringGroups = words_separator(pred(C::in) is semidet :- C \= '#', String),
-    SpringGroupsAsCharList = map(string.to_char_list, SpringGroups),
-    map(list.length, SpringGroupsAsCharList, Groups).
+:- pred map_conditions(list(int)::in, int::in, list(char)::in, bool::out) is nondet.
+map_conditions([], 0, [], yes).
+map_conditions([CurrentGroup], CurrentGroup, [], yes).
+map_conditions(ToMatch, CurrentGroup, [H|T], Res) :- (
+    (
+        H = (.), CurrentGroup = 0,
+        map_conditions(ToMatch, 0, T, Res)
+        ;
+        H = (.), CurrentGroup > 0, ToMatch = [CurrentGroup | Rest],
+        map_conditions(Rest, 0, T, Res)
+        ;
+        H = '#', ToMatch = [NextToMatch | _], NextToMatch > CurrentGroup,
+        map_conditions(ToMatch, CurrentGroup + 1, T, Res)
+        ;
+        H = '?',
+        (HN = (.); HN = '#'),
+        map_conditions(ToMatch, CurrentGroup, [HN]++T, Res)
+    )
+).
 
 :- pred solve_for_row({list(char), list(int)}::in, int::out) is det.
 solve_for_row({LI, Groups}, NumberSolutions) :-
     promise_equivalent_solutions [NumberSolutions] (
-    solutions.unsorted_aggregate(
-        map_conditions(LI),
-        pred(Res::in, CountIn::in, CountOut::out) is det :- valid_mapping(Res, Groups) -> CountOut = CountIn + 1; CountOut = CountIn,
-        0,
-        NumberSolutions
-    )).
+        solutions.unsorted_aggregate(
+            map_conditions(Groups, 0, LI),
+            pred(_::in, CountIn::in, CountOut::out) is det :- CountOut = CountIn + 1,
+            0,
+            NumberSolutions
+        )
+    )
+    /*,trace [io(!IO)] (io.write({LI, Groups, NumberSolutions}, !IO), io.nl(!IO))*/
+    .
 
 :- pred sum(list(int)::in, int::out) is det.
 sum([], 0).
 sum([H|T], Out) :- sum(T, Out - H).
 
+:- pred transform_chars(list(char)::in, int::in, list(char)::out) is det.
+transform_chars(L, I, O) :- I = 1 -> O = L; transform_chars(L, I-1, OO), append(L ++ ['?'], OO, O).
+
+:- pred transform_groups(list(int)::in, int::in, list(int)::out) is det.
+transform_groups(L, I, O) :- I = 1 -> O = L; transform_groups(L, I-1, OO), append(L, OO, O).
+
+:- pred transform_row(int::in, {list(char), list(int)}::in, {list(char), list(int)}::out) is det.
+transform_row(Count, {LI, Groups}, {LO, GroupsOut}) :- transform_chars(LI, Count, LO), transform_groups(Groups, Count, GroupsOut).
 
 main(!IO) :- (
     io.read_named_file_as_lines("/tmp/day12.txt", Result, !IO),
@@ -57,9 +74,15 @@ main(!IO) :- (
         (
             if map(parse_row, Rows, ParsedRows)
             then
-                map(solve_for_row, ParsedRows, NumberSolutionsPerRow),
-                sum(NumberSolutionsPerRow, ResultP1),
-                io.write(ResultP1, !IO)
+                map(solve_for_row, ParsedRows, NumberSolutionsPerRowP1),
+                sum(NumberSolutionsPerRowP1, ResultP1),
+                io.write(ResultP1, !IO),
+                io.nl(!IO),
+                map(transform_row(5), ParsedRows, TransformedRows5),
+                map(solve_for_row, TransformedRows5, NumberSolutionsPerRow5),
+                sum(NumberSolutionsPerRow5, ResultP2),
+                io.write(ResultP2, !IO),
+                io.nl(!IO)
             else
                 io.write("fu", !IO)
         )
