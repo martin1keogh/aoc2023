@@ -6,6 +6,7 @@
 :- pred main(io::di, io::uo) is det.
 :- implementation.
 
+:- import_module bool.
 :- import_module char.
 :- import_module int.
 :- import_module list.
@@ -39,25 +40,47 @@ transpose(Grid @ [[_ | _] | _], GridT) :-
     transpose(Rest, RestT),
     append([RowT], RestT, GridT).
 
-:- pred find_reflection(list(list(char))::in, int::out) is nondet.
-find_reflection(Grid, Res) :-
+% nondet instead of multi because we refuse to return an unmodified list (eg [] -> [])
+:- pred modify_list(list(list(char))::in, list(list(char))::out) is nondet.
+modify_list([[] | T], [[] | Out]) :- modify_list(T, Out).
+modify_list([[H | TT] | T], Out) :- (
+    (
+        (H = '#' -> NH = (.); NH = '#'),
+        Out = [[NH | TT] | T]
+    ;
+        modify_list([TT], [TTOut]),
+        Out = [[H | TTOut] | T]
+    ;
+        modify_list(T, TOut), is_not_empty(T),
+        Out = [[H | TT] | TOut]
+    )
+).
+
+:- pred find_reflection(bool::in, list(list(char))::in, int::out) is nondet.
+find_reflection(IsP1, Grid, Res) :-
     R = range(0, length(Grid)),
     nondet_member(I, R),
     split_list(I, Grid, L1, L2),
     is_not_empty(L1), is_not_empty(L2),
     reverse(L1, RL1),
-    (append(RL1, _, L2) ; append(L2, _, RL1)),
+    (IsP1 = yes -> MRL1 = RL1; modify_list(RL1, MRL1)),
+    (append(MRL1, _, L2) ; append(L2, _, MRL1)),
     Res = I.
 
-:- pred solve_for_grid(list(list(char))::in, int::out) is nondet.
-solve_for_grid(Grid, Res) :-
+:- pred solve_for_grid(bool::in, list(list(char))::in, int::out) is nondet.
+solve_for_grid(IsP1, Grid, Res) :-
     (
-        find_reflection(Grid, R), Mult = 100
+        find_reflection(IsP1, Grid, R), Mult = 100
         ;
         transpose(Grid, GridT),
-        find_reflection(GridT, R), Mult = 1
+        find_reflection(IsP1, GridT, R), Mult = 1
     ),
-    Res = R * Mult.
+    Res = R * Mult,
+    (
+        if IsP1 = yes
+        then true
+        else solve_for_grid(yes, Grid, ResP1), ResP1 \= Res
+    ).
 
 :- pred sum(list(int)::in, int::out) is det.
 sum(Set, Res) :-
@@ -70,11 +93,16 @@ main(!IO) :- (
         Result = ok(Rows),
         split_into_blocks(Rows, Blocks),
         map(to_grid, Blocks, Grids),
-        io.write(Grids, !IO),
-        solutions(map(solve_for_grid, Grids), Solution),
-        condense(Solution, Flattened),
-        sum(Flattened, P1),
-        io.write(P1, !IO)
+        solutions(map(solve_for_grid(yes), Grids), SolutionP1),
+        condense(SolutionP1, FlattenedP1),
+        sum(FlattenedP1, P1),
+        io.write(P1, !IO),
+        io.nl(!IO),
+        solutions(map(solve_for_grid(no), Grids), SolutionP2),
+        condense(SolutionP2, FlattenedP2),
+        sum(FlattenedP2, P2),
+        io.write(P2, !IO),
+        io.nl(!IO)
 
         ;
 
