@@ -86,6 +86,13 @@ solve_for_grid(IsP1, Grid, Res) :-
 sum(Set, Res) :-
     foldl(pred(I::in, A::in, R::out) is det :- R = I + A, Set, 0, Res).
 
+:- pred sanity_check(list(T)::in, list(list(int))::in) is semidet.
+sanity_check(Grids, Solutions) :-
+    % all solutions have found 1 value per Grid
+    all_true(same_length(Grids), Solutions),
+    % the solution is unique
+    length(Solutions, 1).
+
 main(!IO) :- (
     io.read_named_file_as_lines("/tmp/day13.txt", Result, !IO),
 
@@ -94,11 +101,21 @@ main(!IO) :- (
         split_into_blocks(Rows, Blocks),
         map(to_grid, Blocks, Grids),
         solutions(map(solve_for_grid(yes), Grids), SolutionP1),
+        (
+            if not sanity_check(Grids, SolutionP1)
+            then io.write({"Unexpected solution pattern in P1", SolutionP1}, !IO)
+            else true
+        ),
         condense(SolutionP1, FlattenedP1),
         sum(FlattenedP1, P1),
         io.write(P1, !IO),
         io.nl(!IO),
         solutions(map(solve_for_grid(no), Grids), SolutionP2),
+        (
+            if not sanity_check(Grids, SolutionP2)
+            then io.write({"Unexpected solution pattern in P2", SolutionP2}, !IO)
+            else true
+        ),
         condense(SolutionP2, FlattenedP2),
         sum(FlattenedP2, P2),
         io.write(P2, !IO),
