@@ -6,7 +6,6 @@
 :- pred main(io::di, io::uo) is det.
 :- implementation.
 
-:- import_module bool.
 :- import_module char.
 :- import_module int.
 :- import_module list.
@@ -35,10 +34,10 @@ shift_left(Chars, Out) :-
         ),
         Chars ++ ['#'],
         {[], []},
-        {Acc, LastGroup}
+        {Acc, _}
     ),
-    OutRev = Acc,
-    Out = reverse(OutRev).
+    /*trace [io(!IO)] (io.write({Acc, Out}, !IO), io.nl(!IO)),*/
+    Out = det_tail(reverse(Acc)).
 
 
 :- pred score_perm(list(char)::in, int::out) is det.
@@ -51,6 +50,27 @@ score_perm(Chars, Out) :-
         {Out, _}
     ).
 
+:- pred cycle(list(list(char))::in, list(list(char))::out) is det.
+cycle(Chars, Out) :-
+    transpose(Chars, NorthFirst),
+    map(shift_left, NorthFirst, ShiftedNorthFirst),
+
+    transpose(ShiftedNorthFirst, WestFirst),
+    map(shift_left, WestFirst, ShiftedWestFirst),
+
+    transpose(ShiftedWestFirst, NorthFirstBeforeRev),
+    SouthFirst = map(list.reverse, NorthFirstBeforeRev),
+    map(shift_left, SouthFirst, ShiftedSouthFirst),
+
+    transpose(ShiftedSouthFirst, ShiftedSouthFirstBeforeRev),
+    EastFirst = map(list.reverse, ShiftedSouthFirstBeforeRev),
+    map(shift_left, EastFirst, ShiftedEastFirst),
+
+    transpose(ShiftedEastFirst, SouthFirstBeforeRev),
+    SouthFirstTranspose = map(list.reverse, SouthFirstBeforeRev),
+    transpose(SouthFirstTranspose, OutR),
+    Out = map(list.reverse, OutR).
+
 :- pred sum(list(int)::in, int::out) is det.
 sum(Set, Res) :-
     foldl(pred(I::in, A::in, R::out) is det :- R = I + A, Set, 0, Res).
@@ -61,11 +81,30 @@ main(!IO) :- (
     (
         Result = ok(Rows),
         to_grid(Rows, Blocks),
-        transpose(Blocks, BlocksT),
-        map(shift_left, BlocksT, ShiftedLeft),
+        transpose(Blocks, NorthFirst),
+        map(shift_left, NorthFirst, ShiftedLeft),
         map(score_perm, ShiftedLeft, Solutions),
         sum(Solutions, Solution),
         io.write(Solution, !IO),
+        io.nl(!IO),
+
+        % Too lazy to code the actual cycle detection in mercury.
+        % Pipe the output of this to a file, find the cycle, compute
+        % '(1_000_000_000 - line_cycle_start) % cycle_length', move down
+        % that many lines.
+        % Input this value as the answer, and pray.
+        R = range(1, 1000),
+        foldl(
+            pred(_::in, CIn::in, COut::out) is det :- (
+                cycle(CIn, COut),
+                % output the current score we get every iteration
+                transpose(COut, CT), map(score_perm, CT, SOut), sum(SOut, X),
+                trace [io(!IO)] (io.write(X, !IO), io.nl(!IO))
+            ),
+            R,
+            Blocks,
+            _
+        ),
         io.nl(!IO)
 
         ;
