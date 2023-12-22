@@ -31,10 +31,7 @@ parse_line(Line, Box) :-
 :- pred to_rtree(list(string)::in, rt::out) is det.
 to_rtree(Input, RTree) :-
     foldl(
-        pred(Line::in, {RTreeIn, I}::in, {RTreeOut, I + 1}::out) is det :- (
-            parse_line(Line, Box),
-            rtree.insert(Box, I, RTreeIn, RTreeOut)
-        ),
+        pred(Line::in, {RTreeIn, I}::in, {rtree.insert(Box, I, RTreeIn), I + 1}::out) is det :- parse_line(Line, Box),
         Input,
         {rtree.init, 1},
         {RTree, _}
@@ -75,20 +72,11 @@ shift_down_until_stable(RTreeIn, RTreeOut, ValuesShifted) :-
 :- pred count_destructible(rt::in, int::out, int::out) is det.
 count_destructible(RTree, CountDestructible, CountChain) :-
     rtree.fold(
-        pred(K::in, V::in, {CountDestructibleIn, CountChainIn}::in, {CountDestructibleOut, CountChainOut}::out) is det :- (
+        pred(K::in, V::in, {CountP1In, CountP2In}::in, {CountP1In + (is_empty(Shifted) -> 1; 0), CountP2In + set.count(Shifted)}::out) is det :- (
             if
                 rtree.delete(K, V, RTree, Tmp)
             then
-                shift_down_until_stable(Tmp, TmpStablized, ValuesShifted),
-                (
-                    if Tmp = TmpStablized
-                    then
-                        CountDestructibleOut = CountDestructibleIn + 1,
-                        CountChainOut = CountChainIn
-                    else
-                        CountDestructibleOut = CountDestructibleIn,
-                        CountChainOut = CountChainIn + set.count(ValuesShifted)
-                )
+                shift_down_until_stable(Tmp, _, Shifted)
             else
                 error("Unable to delete known K/V in RTree")
         ),
