@@ -44,21 +44,17 @@ to_rtree(Input, RTree) :-
 shift_all_one_down(RTreeIn, RTreeOut, ValuesShifted) :-
     rtree.fold(
         pred(Key@box3d(XMin, XMax, YMin, YMax, ZMin, ZMax)::in, Value::in, {RTreeAccIn, ValuesShiftedAccIn}::in, {RTreeAccOut, ValuesShiftedAccOut}::out) is det :- (
-            if ZMin = 1.0  % can't shift down anyway
+            if 
+                ZMin > 1.0,
+                rtree.delete(Key, Value, RTreeAccIn, Tmp),
+                Shifted = box3d(XMin, XMax, YMin, YMax, ZMin - 1.0, ZMax - 1.0),
+                search_intersects(Tmp, Shifted) = []
             then
+                rtree.insert(Shifted, Value, Tmp, RTreeAccOut),
+                set.insert(Value, ValuesShiftedAccIn, ValuesShiftedAccOut)
+            else
                 RTreeAccOut = RTreeAccIn,
                 ValuesShiftedAccOut = ValuesShiftedAccIn
-            else
-                if
-                    rtree.delete(Key, Value, RTreeAccIn, Tmp),
-                    Shifted = box3d(XMin, XMax, YMin, YMax, ZMin - 1.0, ZMax - 1.0),
-                    search_intersects(Tmp, Shifted) = []
-                then
-                    rtree.insert(Shifted, Value, Tmp, RTreeAccOut),
-                    set.insert(Value, ValuesShiftedAccIn, ValuesShiftedAccOut)
-                else
-                    RTreeAccOut = RTreeAccIn,
-                    ValuesShiftedAccOut = ValuesShiftedAccIn
         ),
         RTreeIn,
         {RTreeIn, set.init},
@@ -76,39 +72,29 @@ shift_down_until_stable(RTreeIn, RTreeOut, ValuesShifted) :-
             set.union(ShiftedStep, ShiftedRec, ValuesShifted)
     ).
 
-:- pred count_destructible(rt::in, int::out) is det.
-count_destructible(RTree, Count) :-
+:- pred count_destructible(rt::in, int::out, int::out) is det.
+count_destructible(RTree, CountDestructible, CountChain) :-
     rtree.fold(
-        pred(K::in, V::in, CountIn::in, CountOut::out) is det :- (
-            if
-                rtree.delete(K, V, RTree, Tmp),
-                shift_all_one_down(Tmp, Tmp, _)
-            then
-                CountOut = CountIn + 1
-            else
-                CountOut = CountIn
-        ),
-        RTree,
-        0,
-        Count
-    ).
-
-:- pred count_destructible_chain(rt::in, int::out) is det.
-count_destructible_chain(RTree, Count) :-
-    rtree.fold(
-        pred(K::in, V::in, CountIn::in, CountOut::out) is det :- (
+        pred(K::in, V::in, {CountDestructibleIn, CountChainIn}::in, {CountDestructibleOut, CountChainOut}::out) is det :- (
             if
                 rtree.delete(K, V, RTree, Tmp)
             then
-                shift_down_until_stable(Tmp, _, Shifted),
-                CountOut = CountIn + set.count(Shifted)
+                shift_down_until_stable(Tmp, TmpStablized, ValuesShifted),
+                (
+                    if Tmp = TmpStablized
+                    then
+                        CountDestructibleOut = CountDestructibleIn + 1,
+                        CountChainOut = CountChainIn
+                    else
+                        CountDestructibleOut = CountDestructibleIn,
+                        CountChainOut = CountChainIn + set.count(ValuesShifted)
+                )
             else
-                % Should really be an error
-                CountOut = CountIn
+                error("Unable to delete known K/V in RTree")
         ),
         RTree,
-        0,
-        Count
+        {0, 0},
+        {CountDestructible, CountChain}
     ).
 
 main(!IO) :- (
@@ -118,8 +104,7 @@ main(!IO) :- (
         Result = ok(Rows),
         to_rtree(Rows, RTree),
         shift_down_until_stable(RTree, RTreeStable, _),
-        count_destructible(RTreeStable, P1),
-        count_destructible_chain(RTreeStable, P2),
+        count_destructible(RTreeStable, P1, P2),
 
         io.write({P1, P2}, !IO),
         io.nl(!IO)
