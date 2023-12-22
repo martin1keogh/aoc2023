@@ -11,6 +11,7 @@
 :- import_module list.
 :- import_module require.
 :- import_module rtree.
+:- import_module set.
 :- import_module string.
 
 :- type rt == rtree(box3d, int).
@@ -39,33 +40,40 @@ to_rtree(Input, RTree) :-
         {RTree, _}
     ).
 
-:- pred shift_all_one_down(rt::in, rt::out) is det.
-shift_all_one_down(!RTree) :-
+:- pred shift_all_one_down(rt::in, rt::out, set(int)::out) is det.
+shift_all_one_down(RTreeIn, RTreeOut, ValuesShifted) :-
     rtree.fold(
-        pred(Key@box3d(XMin, XMax, YMin, YMax, ZMin, ZMax)::in, Value::in, AccIn::in, AccOut::out) is det :- (
+        pred(Key@box3d(XMin, XMax, YMin, YMax, ZMin, ZMax)::in, Value::in, {RTreeAccIn, ValuesShiftedAccIn}::in, {RTreeAccOut, ValuesShiftedAccOut}::out) is det :- (
             if ZMin = 1.0  % can't shift down anyway
-            then AccOut = AccIn
+            then
+                RTreeAccOut = RTreeAccIn,
+                ValuesShiftedAccOut = ValuesShiftedAccIn
             else
                 if
-                    rtree.delete(Key, Value, AccIn, Tmp),
+                    rtree.delete(Key, Value, RTreeAccIn, Tmp),
                     Shifted = box3d(XMin, XMax, YMin, YMax, ZMin - 1.0, ZMax - 1.0),
                     search_intersects(Tmp, Shifted) = []
                 then
-                    rtree.insert(Shifted, Value, Tmp, AccOut)
+                    rtree.insert(Shifted, Value, Tmp, RTreeAccOut),
+                    set.insert(Value, ValuesShiftedAccIn, ValuesShiftedAccOut)
                 else
-                    AccOut = AccIn
+                    RTreeAccOut = RTreeAccIn,
+                    ValuesShiftedAccOut = ValuesShiftedAccIn
         ),
-        !.RTree,
-        !RTree
+        RTreeIn,
+        {RTreeIn, set.init},
+        {RTreeOut, ValuesShifted}
     ).
 
-:- pred shift_down_until_stable(rt::in, rt::out) is det.
-shift_down_until_stable(RTreeIn, RTreeOut) :-
-    shift_all_one_down(RTreeIn, RTreeStep),
+:- pred shift_down_until_stable(rt::in, rt::out, set(int)::out) is det.
+shift_down_until_stable(RTreeIn, RTreeOut, ValuesShifted) :-
+    shift_all_one_down(RTreeIn, RTreeStep, ShiftedStep),
     (
         if RTreeIn = RTreeStep
-        then RTreeOut = RTreeStep
-        else shift_down_until_stable(RTreeStep, RTreeOut)
+        then RTreeOut = RTreeStep, ValuesShifted = ShiftedStep
+        else
+            shift_down_until_stable(RTreeStep, RTreeOut, ShiftedRec),
+            set.union(ShiftedStep, ShiftedRec, ValuesShifted)
     ).
 
 :- pred count_destructible(rt::in, int::out) is det.
@@ -74,10 +82,28 @@ count_destructible(RTree, Count) :-
         pred(K::in, V::in, CountIn::in, CountOut::out) is det :- (
             if
                 rtree.delete(K, V, RTree, Tmp),
-                shift_all_one_down(Tmp, Tmp)
+                shift_all_one_down(Tmp, Tmp, _)
             then
                 CountOut = CountIn + 1
             else
+                CountOut = CountIn
+        ),
+        RTree,
+        0,
+        Count
+    ).
+
+:- pred count_destructible_chain(rt::in, int::out) is det.
+count_destructible_chain(RTree, Count) :-
+    rtree.fold(
+        pred(K::in, V::in, CountIn::in, CountOut::out) is det :- (
+            if
+                rtree.delete(K, V, RTree, Tmp)
+            then
+                shift_down_until_stable(Tmp, _, Shifted),
+                CountOut = CountIn + set.count(Shifted)
+            else
+                % Should really be an error
                 CountOut = CountIn
         ),
         RTree,
@@ -91,10 +117,11 @@ main(!IO) :- (
     (
         Result = ok(Rows),
         to_rtree(Rows, RTree),
-        shift_down_until_stable(RTree, RTreeStable),
+        shift_down_until_stable(RTree, RTreeStable, _),
         count_destructible(RTreeStable, P1),
+        count_destructible_chain(RTreeStable, P2),
 
-        io.write(P1, !IO),
+        io.write({P1, P2}, !IO),
         io.nl(!IO)
 
         ;
