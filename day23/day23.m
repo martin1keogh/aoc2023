@@ -3,7 +3,7 @@
 :- module day23.
 :- interface.
 :- import_module io.
-:- pred main(io::di, io::uo) is det.
+:- pred main(io::di, io::uo) is cc_multi.
 :- implementation.
 
 :- import_module array2d.
@@ -11,6 +11,8 @@
 :- import_module digraph.
 :- import_module int.
 :- import_module list.
+:- import_module map.
+:- import_module maybe.
 :- import_module pretty_printer.
 :- import_module ranges.
 :- import_module require.
@@ -63,26 +65,57 @@ compare_by_length(L1, L2, R) :-
     compare(R, LL1, LL2).
 
 :- pred path(digraph(T)::in, digraph_key(T)::in, digraph_key(T)::in, set(digraph_key(T))::in, list(digraph_key(T))::out) is nondet.
-path(_, End, End, _, []).
+path(_, End, End, _, [End]).
 path(Graph, Start, End, Seen, Path) :-
-    (
-        lookup_from(Graph, Start, ReachableFromStart),
-        set.member(Next, ReachableFromStart),
-        not set.member(Next, Seen),
-        insert(Next, Seen, SeenNext),
-        path(Graph, Next, End, SeenNext, PathNext),
-        Path = [Start] ++ PathNext
-    )
-.
+    lookup_from(Graph, Start, ReachableFromStart),
+    set.member(Next, ReachableFromStart),
+    not set.member(Next, Seen),
+    insert(Next, Seen, SeenNext),
+    path(Graph, Next, End, SeenNext, PathNext),
+    Path = [Start] ++ PathNext.
 
-:- pred longuest_path(digraph({int, int})::in, {int, int}::in, {int, int}::in, list({int, int})::out) is det.
-longuest_path(Graph, Start, End, Path) :-
-    lookup_key(Graph, Start, StartK),
-    lookup_key(Graph, End, EndK),
+:- pred longuest_path(digraph(T)::in, digraph_key(T)::in, digraph_key(T)::in, list(T)::out) is det.
+longuest_path(Graph, StartK, EndK, Path) :-
     solutions(path(Graph, StartK, EndK, set.make_singleton_set(StartK)), PathsK),
     sort(compare_by_length, PathsK, SortedPathsK),
     LonguestPathK = det_head(reverse(SortedPathsK)),
     map(lookup_vertex(Graph), LonguestPathK, Path).
+
+:- pred longuest_path_p2(digraph(T)::in, digraph_key(T)::in, digraph_key(T)::in, list(T)::out) is cc_multi.
+longuest_path_p2(Graph, StartK, EndK, Path) :-
+    reduced(Graph, ReducedGraph, Correspondance),
+    RCorrepondance = reverse_map(Correspondance),
+    sc(ReducedGraph, SCRGraph),  % symmetrical closure
+
+    unsorted_aggregate(
+        path(SCRGraph, lookup(Correspondance, StartK), lookup(Correspondance, EndK), set.make_singleton_set(lookup(Correspondance, StartK))),
+        pred(PathK::in, LonguestPathKOpt::in, yes({NewLonguestPathK, NewLength})::out) is det :- (
+            ExpandedCliques = map(lookup(RCorrepondance), PathK),
+            condense(map(to_sorted_list, ExpandedCliques), ExpandedPathK),
+            length(ExpandedPathK, Length + 1),  % +1 to still remove the [End] link, same as P1
+            (
+                LonguestPathKOpt = no, NewLonguestPathK = ExpandedPathK, NewLength = Length
+                ;
+                LonguestPathKOpt = yes({CurrentLonguestPathK, CurrentLength}),
+                (
+                    CurrentLength >= Length ->
+                    NewLonguestPathK = CurrentLonguestPathK, NewLength = CurrentLength
+                    ;
+                    trace [io(!IO)] (io.write(NewLength, !IO), io.nl(!IO)),
+                    NewLonguestPathK = ExpandedPathK, NewLength = Length)
+            )
+        ),
+        no,
+        WinningPathAndLength
+    ),
+
+    (
+        WinningPathAndLength = yes({LonguestPathK, _})
+        ;
+        WinningPathAndLength = no, error("Too bad")
+    ),
+    map(lookup_vertex(Graph), LonguestPathK, Path).
+
 
 main(!IO) :- (
     io.read_named_file_as_lines("/tmp/day23.txt", Result, !IO),
@@ -91,12 +124,23 @@ main(!IO) :- (
         Result = ok(Rows),
         Grid = array2d(list.map(to_char_list, Rows)),
         bounds(Grid, YMax, XMax),
-        StartV = {0, 1}, EndV = {YMax - 1, XMax - 2},
-
+        StartV = {0, 1},
+        EndV = {YMax - 1, XMax - 2},
+        lookup_key(Graph, StartV, StartK),
+        lookup_key(Graph, EndV, EndK),
         build_graph(Grid, Graph),
-        longuest_path(Graph, StartV, EndV, LonguestPath),
-        length(LonguestPath, P1),
-        io.write(P1, !IO),
+
+        longuest_path(Graph, StartK, EndK, LonguestPath),
+        length(LonguestPath, P1 + 1),
+        io.write({"P1:", P1}, !IO), io.nl(!IO),
+
+        io.write("This should take about 10 to 15 minutes. Intermediate results for P2 will be printed as a new longest path is found.", !IO),
+        io.nl(!IO),
+
+        longuest_path_p2(Graph, StartK, EndK, LonguestPathP2),
+        length(LonguestPathP2, P2 + 1),
+
+        io.write({"P2:", P2}, !IO),
         io.nl(!IO)
 
         ;
